@@ -93,7 +93,7 @@ const Index = () => {
       {/* Floating Simulation Button (Demo Only) */}
       <div className="fixed bottom-4 left-4 z-50">
         <Button variant="destructive" onClick={simulateDisaster}>
-          ⚠️ Simulate Flood
+          Simulate Flood
         </Button>
       </div>
 
