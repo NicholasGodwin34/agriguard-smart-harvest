@@ -1,0 +1,10 @@
+project_id = "yugtezjydwywbelraiku"
+
+[functions.climate-agent]
+verify_jwt = false
+
+[functions.crop-health-agent]
+verify_jwt = false
+
+[functions.market-intelligence-agent]
+verify_jwt = false
