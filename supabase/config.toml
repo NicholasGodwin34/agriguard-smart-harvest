@@ -8,3 +8,10 @@ verify_jwt = false
 
 [functions.market-intelligence-agent]
 verify_jwt = false
+
+# ... existing config
+[functions.post-harvest-agent]
+verify_jwt = false
+
+[functions.government-reporting-agent]
+verify_jwt = false
