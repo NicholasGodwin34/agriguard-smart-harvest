@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -5,26 +6,31 @@ import heroImage from "@/assets/hero-agriculture.jpg";
 import { AgentDashboard } from "@/components/AgentDashboard";
 import { AlertsFeed } from "@/components/AlertsFeed";
 import { ClimateRiskMap } from "@/components/ClimateRiskMap";
-// Import the components we created in the previous step
-import { FarmerChat } from "@/components/FarmerChat"; 
+import { FarmerChat } from "@/components/FarmerChat";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
+// NEW IMPORT
+import { startSatelliteStream } from "@/utils/simulators";
+
 const Index = () => {
-  
-  // Helper for smooth scrolling
+
+  // NEW STATE
+  const [isStreaming, setIsStreaming] = useState(false);
+
+  // Smooth scrolling helper
   const scrollToSection = (id: string) => {
     const element = document.getElementById(id);
     if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
+      element.scrollIntoView({ behavior: "smooth" });
     }
   };
 
-  // Simulation function (from previous advice)
+  // Existing flood simulation
   const simulateDisaster = async () => {
     toast.error("⚠️ CRITICAL ALERT: Flash Flood Detected in Kiambu Region!", {
-        description: "300mm rainfall expected in next 4 hours. Immediate harvest recommended.",
-        duration: 8000,
+      description: "300mm rainfall expected in next 4 hours. Immediate harvest recommended.",
+      duration: 8000,
     });
   };
 
@@ -32,7 +38,7 @@ const Index = () => {
     <div className="min-h-screen bg-gradient-hero relative">
       {/* Hero Section */}
       <section className="relative overflow-hidden">
-        <div 
+        <div
           className="absolute inset-0 bg-cover bg-center opacity-30"
           style={{ backgroundImage: `url(${heroImage})` }}
         />
@@ -52,18 +58,17 @@ const Index = () => {
               Preventing post-harvest losses through intelligent monitoring and climate-resilient decision making.
             </p>
             <div className="flex gap-4 justify-center">
-              {/* UPDATED BUTTONS HERE */}
               <Button 
                 size="lg" 
                 className="bg-gradient-primary"
-                onClick={() => scrollToSection('agent-dashboard')}
+                onClick={() => scrollToSection("agent-dashboard")}
               >
                 Access Dashboard
               </Button>
               <Button 
                 size="lg" 
                 variant="outline"
-                onClick={() => scrollToSection('risk-map')}
+                onClick={() => scrollToSection("risk-map")}
               >
                 Learn More
               </Button>
@@ -72,7 +77,7 @@ const Index = () => {
         </div>
       </section>
 
-      {/* AI Agents Status - Wrapped with ID */}
+      {/* AI Agents Status */}
       <div id="agent-dashboard">
         <AgentDashboard />
       </div>
@@ -80,19 +85,40 @@ const Index = () => {
       {/* Real-time Alerts */}
       <AlertsFeed />
 
-      {/* Climate Risk Dashboard - Wrapped with ID for 'Learn More' */}
+      {/* Climate Risk Dashboard */}
       <div id="risk-map">
         <ClimateRiskMap />
       </div>
 
-      {/* Simulation Controls (God Mode) */}
-      <div className="fixed bottom-4 left-4 z-50">
+      {/* Simulation Controls */}
+      <div className="fixed bottom-4 left-4 z-50 flex flex-col gap-3">
+
+        {/* Existing Flood Simulation Button */}
         <Button variant="destructive" onClick={simulateDisaster}>
           ⚡ Simulate Flood Event
         </Button>
+
+        {/* NEW SATELLITE STREAM BUTTON */}
+        <Button
+          variant={isStreaming ? "secondary" : "outline"}
+          className={isStreaming ? "animate-pulse border-green-500 text-green-500" : ""}
+          onClick={() => {
+            if (isStreaming) {
+              // Quick hack to stop stream
+              window.location.reload();
+            } else {
+              setIsStreaming(true);
+              startSatelliteStream("Kiambu County", (data) => {
+                console.log("Satellite Update:", data);
+              });
+            }
+          }}
+        >
+          {isStreaming ? "📡 Live Satellite Feed Active" : "📡 Connect Satellite Feed"}
+        </Button>
       </div>
 
-      {/* Farmer Chat Interface */}
+      {/* Farmer Chat Assistant */}
       <FarmerChat />
     </div>
   );
