@@ -3,196 +3,239 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageCircle, Send, User, Bot, Image as ImageIcon } from "lucide-react";
+import { MessageCircle, Send, Bot, User, Camera, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  image?: string;
 }
 
 export const FarmerChat = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Jambo! I am AgriGuard Assistant. How can I help you today?" }
+    {
+      role: "assistant",
+      content:
+        'Jambo! I am AgriGuard. Ask about market prices (e.g. "Price of maize in Kiambu") or upload a crop photo.',
+    },
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   // -------------------------------------------------------
-  // PRICE PARSER — Extract crop + county
+  // Extract commodity + location from text
   // -------------------------------------------------------
-  const extractPriceQuery = (text: string) => {
+  const parsePriceQuery = (text: string) => {
     const lower = text.toLowerCase();
 
-    const crops = ["maize", "beans", "rice", "wheat", "potatoes", "sorghum"];
-    const counties = [
-      "nairobi","nakuru","kiambu","kisumu","eldoret","machakos","meru",
-      "bomet","kericho","nandi","embu","makueni","kirinyaga"
+    const commodities = ["maize", "wheat", "rice", "beans", "potatoes", "sorghum"];
+    const locations = [
+      "nairobi",
+      "nakuru",
+      "kiambu",
+      "mombasa",
+      "kisumu",
+      "meru",
+      "bomet",
+      "embu",
+      "kericho",
+      "eldoret",
+      "machakos",
+      "nandi",
     ];
 
-    const crop = crops.find(c => lower.includes(c));
-    const county = counties.find(c => lower.includes(c));
+    const commodity = commodities.find((c) => lower.includes(c));
+    const location = locations.find((l) => lower.includes(l));
 
-    if (!crop || !county) return null;
-    return { crop, county };
+    if (!commodity || !location) return null;
+
+    return { commodity, location };
   };
 
   // -------------------------------------------------------
-  // MOCK CROP HEALTH IMAGE ANALYSIS
+  // Handle sending text messages
   // -------------------------------------------------------
-  const handleImageUpload = () => {
-    setMessages(prev => [...prev, { role: "user", content: "[Image Uploaded]" }]);
-    setIsLoading(true);
-
-    setTimeout(() => {
-      setMessages(prev => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "I have analyzed your crop photo. The leaves show early signs of fungal infection. Apply recommended fungicide and monitor moisture levels."
-        }
-      ]);
-      setIsLoading(false);
-    }, 1500);
-  };
-
   const handleSend = async () => {
     if (!input.trim()) return;
 
-    const userMsg = input;
-    setMessages(prev => [...prev, { role: "user", content: userMsg }]);
+    const text = input;
+    setMessages((prev) => [...prev, { role: "user", content: text }]);
     setInput("");
     setIsLoading(true);
 
     try {
-      let responseText = "";
+      let response = "I didn’t understand that. Ask about prices, weather, or upload a photo.";
 
       // -------------------------------------------------------
-      // 1. PRICE QUERY LOGIC
+      // 1 — MARKET PRICE LOGIC
       // -------------------------------------------------------
-      const priceQuery = extractPriceQuery(userMsg);
+      const priceQuery = parsePriceQuery(text);
       if (priceQuery) {
-        const { crop, county } = priceQuery;
+        const { commodity, location } = priceQuery;
 
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from("market_prices")
           .select("*")
-          .eq("crop", crop)
-          .eq("county", county)
-          .order("created_at", { ascending: false })
+          .ilike("commodity", `%${commodity}%`)
+          .ilike("market_location", `%${location}%`)
+          .order("recorded_at", { ascending: false })
           .limit(1);
 
-        if (data && data.length > 0) {
-          const price = data[0].price_per_kg || data[0].price || "N/A";
-          const trend = data[0].price_trend || "stable";
+        if (error) throw error;
 
-          responseText = `The current price of ${crop} in ${county} is KES ${price} per kg. Trend: ${trend}.`;
+        if (data && data.length > 0) {
+          const row = data[0];
+          response = `The current price of ${row.commodity} in ${row.market_location} is KES ${row.price_per_kg}/kg (${row.price_trend}).`;
         } else {
-          responseText = `I could not find updated market prices for ${crop} in ${county}.`;
+          response = `No recent price data found for ${commodity} in ${location}.`;
         }
       }
 
       // -------------------------------------------------------
-      // 2. WEATHER LOGIC
+      // 2 — WEATHER LOGIC
       // -------------------------------------------------------
-      else if (userMsg.toLowerCase().includes("weather") || userMsg.toLowerCase().includes("rain")) {
-        responseText = "Rainfall expected in your region for the next 3 days. Plan harvesting and drying carefully.";
+      else if (text.toLowerCase().includes("weather") || text.toLowerCase().includes("rain")) {
+        response = "Heavy rainfall expected in the Rift Valley region. Ensure proper grain drying and drainage.";
       }
 
       // -------------------------------------------------------
-      // 3. FALLBACK ASSISTANT RESPONSE
+      // 3 — FALLBACK
       // -------------------------------------------------------
       else {
-        responseText =
-          "I can help with: prices (e.g., 'Price of maize in Nakuru'), crop health (send a photo), weather, and market trends.";
+        response =
+          'I can help with: prices (e.g., "Price of maize in Nairobi"), weather alerts, or crop health (upload a photo).';
       }
 
-      setTimeout(() => {
-        setMessages(prev => [...prev, { role: "assistant", content: responseText }]);
-        setIsLoading(false);
-      }, 800);
-
-    } catch (error) {
-      console.error(error);
+      setMessages((prev) => [...prev, { role: "assistant", content: response }]);
+    } catch (err) {
+      console.error("Chat Error:", err);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "System error. Please try again." },
+      ]);
+    } finally {
       setIsLoading(false);
     }
   };
 
+  // -------------------------------------------------------
+  // Handle Image Upload → Crop Health Agent
+  // -------------------------------------------------------
+  const handleImageUpload = async () => {
+    const demoImageUrl =
+      "https://images.unsplash.com/photo-1596734776582-22493a1d816c";
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: "Analyzing this crop...", image: demoImageUrl },
+    ]);
+
+    setIsLoading(true);
+    toast.info("Uploading image for crop analysis...");
+
+    try {
+      const { data, error } = await supabase.functions.invoke("crop-health-agent", {
+        body: {
+          location: "Farmer Chat",
+          cropType: "Unknown",
+          imageUrl: demoImageUrl,
+        },
+      });
+
+      if (error) throw error;
+
+      const result = data?.analysis;
+
+      const diagnosis = `Analysis: ${result.health_status.toUpperCase()}
+Detected: ${result.disease_detected || "None"}
+Advice: ${result.recommendations?.[0] || "Monitor crop conditions."}`;
+
+      setMessages((prev) => [...prev, { role: "assistant", content: diagnosis }]);
+    } catch (err) {
+      console.error("Image Analysis Error:", err);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Failed to analyze image. Try again." },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // -------------------------------------------------------
+  // UI Rendering
+  // -------------------------------------------------------
   return (
     <div className="fixed bottom-4 right-4 z-50">
       {!isOpen && (
-        <Button
-          onClick={() => setIsOpen(true)}
-          className="rounded-full h-14 w-14 shadow-lg bg-[#25D366] hover:bg-[#128C7E]"
-        >
+        <Button className="rounded-full h-14 w-14 bg-green-600" onClick={() => setIsOpen(true)}>
           <MessageCircle className="h-8 w-8 text-white" />
         </Button>
       )}
 
       {isOpen && (
-        <Card className="w-[350px] h-[510px] shadow-2xl flex flex-col">
-          <CardHeader className="bg-primary text-primary-foreground p-4 rounded-t-lg flex flex-row justify-between items-center">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <MessageCircle className="w-5 h-5" /> AgriGuard Chat
+        <Card className="w-[360px] h-[520px] shadow-xl flex flex-col border-green-600">
+          <CardHeader className="bg-green-600 text-white p-3 rounded-t-lg flex justify-between items-center">
+            <CardTitle className="flex items-center gap-2">
+              <Bot className="w-5 h-5" /> AgriGuard
             </CardTitle>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsOpen(false)}
-              className="text-primary-foreground hover:bg-primary/90"
-            >
+            <Button variant="ghost" size="icon" className="text-white" onClick={() => setIsOpen(false)}>
               X
             </Button>
           </CardHeader>
 
-          <CardContent className="flex-1 p-0 flex flex-col overflow-hidden">
-            <ScrollArea className="flex-1 p-4">
+          <CardContent className="flex-1 p-3 flex flex-col overflow-hidden bg-slate-50">
+            <ScrollArea className="flex-1 pr-4">
               <div className="space-y-4">
-                {messages.map((m, i) => (
-                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className={`flex gap-2 max-w-[80%] ${m.role === "user" ? "flex-row-reverse" : ""}`}>
-                      <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                          m.role === "user" ? "bg-primary" : "bg-muted"
-                        }`}
-                      >
-                        {m.role === "user" ? (
-                          <User className="w-4 h-4 text-white" />
-                        ) : (
-                          <Bot className="w-4 h-4" />
-                        )}
-                      </div>
-                      <div
-                        className={`p-3 rounded-lg text-sm ${
-                          m.role === "user" ? "bg-primary text-white" : "bg-muted"
-                        }`}
-                      >
-                        {m.content}
-                      </div>
+                {messages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`p-3 rounded-lg max-w-[85%] text-sm ${
+                        msg.role === "user"
+                          ? "bg-green-600 text-white"
+                          : "bg-white border shadow-sm text-slate-700"
+                      }`}
+                    >
+                      {msg.image && (
+                        <img
+                          src={msg.image}
+                          alt="Crop"
+                          className="rounded-md mb-2 w-full h-32 object-cover"
+                        />
+                      )}
+                      {msg.content}
                     </div>
                   </div>
                 ))}
+
                 {isLoading && (
-                  <div className="text-xs text-muted-foreground ml-12">AgriGuard is typing...</div>
+                  <div className="flex justify-start">
+                    <div className="bg-white border shadow-sm p-3 rounded-lg">
+                      <Loader2 className="w-4 h-4 animate-spin text-green-600" />
+                    </div>
+                  </div>
                 )}
               </div>
             </ScrollArea>
 
-            <div className="p-4 border-t flex gap-2 items-center">
-              <Button size="icon" variant="secondary" onClick={handleImageUpload}>
-                <ImageIcon className="w-5 h-5" />
+            <div className="pt-3 mt-1 border-t flex gap-2 items-center">
+              <Button variant="outline" size="icon" onClick={handleImageUpload}>
+                <Camera className="w-5 h-5 text-slate-700" />
               </Button>
 
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && handleSend()}
-                placeholder="Ask about prices, pests..."
+                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                placeholder="Ask about prices..."
+                className="flex-1"
               />
 
-              <Button size="icon" onClick={handleSend}>
-                <Send className="w-4 h-4" />
+              <Button size="icon" onClick={handleSend} className="bg-green-600">
+                <Send className="w-5 h-5 text-white" />
               </Button>
             </div>
           </CardContent>

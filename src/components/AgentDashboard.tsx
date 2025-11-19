@@ -3,7 +3,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { Cloud, Sprout, AlertTriangle, TrendingUp, Activity, RefreshCw } from "lucide-react";
+import {
+  Cloud,
+  Sprout,
+  AlertTriangle,
+  TrendingUp,
+  Activity,
+  RefreshCw,
+  Download,       // ⭐ NEW IMPORT
+} from "lucide-react";
 import { toast } from "sonner";
 
 interface Agent {
@@ -16,7 +24,7 @@ interface Agent {
   warnings?: number;
   insights?: number;
   reports?: number;
-  triggeredBy?: string; // NEW FIELD
+  triggeredBy?: string;
 }
 
 export const AgentDashboard = () => {
@@ -36,6 +44,7 @@ export const AgentDashboard = () => {
 
   const loadAgentData = async () => {
     try {
+      // Fetch predictions
       const { data: predictions, error: predError } = await supabase
         .from("agent_predictions")
         .select("agent_type, created_at, prediction_data")
@@ -43,28 +52,26 @@ export const AgentDashboard = () => {
 
       if (predError) throw predError;
 
-      // Detect collaboration: Did Climate Agent trigger Post-Harvest Agent?
-      const recentPostHarvest = predictions?.find(p => p.agent_type === "post-harvest");
-      const triggeredByClimate =
-        recentPostHarvest?.prediction_data?.triggerReason?.includes("Climate Risk") ||
-        recentPostHarvest?.prediction_data?.collaboration_status === "Post-Harvest Agent notified";
+      // Collaboration detection
+      const recentPost = predictions?.find((p) => p.agent_type === "post-harvest");
+      const triggered = recentPost?.prediction_data?.triggerReason?.includes("Climate Risk") ||
+        recentPost?.prediction_data?.collaboration_status === "Post-Harvest Agent notified";
 
-      const climatePreds = predictions?.filter(p => p.agent_type === "climate").length || 0;
-      const marketPreds = predictions?.filter(p => p.agent_type === "market").length || 0;
+      const climatePreds = predictions?.filter((p) => p.agent_type === "climate").length || 0;
+      const marketPreds = predictions?.filter((p) => p.agent_type === "market").length || 0;
 
-      // Alerts
+      // Alerts count
       const { count: alertsCount } = await supabase
         .from("alerts")
         .select("*", { count: "exact", head: true })
         .eq("is_active", true);
 
-      // Crop health
       const { count: cropHealthCount } = await supabase
         .from("crop_health")
         .select("*", { count: "exact", head: true });
 
-      setAgents(prev =>
-        prev.map(agent => {
+      setAgents((prev) =>
+        prev.map((agent) => {
           switch (agent.name) {
             case "Climate Risk Prediction":
               return {
@@ -72,29 +79,31 @@ export const AgentDashboard = () => {
                 predictions: climatePreds,
                 lastUpdate: predictions?.[0] ? getTimeAgo(predictions[0].created_at) : "No data",
               };
-
             case "Crop Health Monitor":
               return {
                 ...agent,
                 alerts: cropHealthCount || 0,
                 lastUpdate: getTimeAgo(new Date().toISOString()),
               };
-
             case "Market Intelligence":
               return {
                 ...agent,
                 insights: marketPreds,
                 lastUpdate: getTimeAgo(new Date().toISOString()),
               };
-
             case "Post-Harvest Prevention":
               return {
                 ...agent,
                 warnings: alertsCount || 0,
                 lastUpdate: getTimeAgo(new Date().toISOString()),
-                triggeredBy: triggeredByClimate ? "Climate Agent" : undefined, // COLL. FLAG
+                triggeredBy: triggered ? "Climate Agent" : undefined,
               };
-
+            case "Government Reporting":
+              return {
+                ...agent,
+                reports: predictions?.filter((p) => p.agent_type === "government").length || 0,
+                lastUpdate: getTimeAgo(new Date().toISOString()),
+              };
             default:
               return agent;
           }
@@ -127,37 +136,29 @@ export const AgentDashboard = () => {
           endpoint = "climate-agent";
           payload = { region: "Central Kenya", requestType: "forecast" };
           break;
-
         case "crop":
           endpoint = "crop-health-agent";
           payload = { location: "Kiambu", cropType: "Maize" };
           break;
-
-        case "market":
-          endpoint = "market-intelligence-agent";
-          payload = { commodity: "Maize", location: "Nairobi" };
-          break;
-
         case "post-harvest":
           endpoint = "post-harvest-agent";
           payload = { region: "Nakuru", cropType: "Wheat", storageType: "Silo" };
           break;
-
+        case "market":
+          endpoint = "market-intelligence-agent";
+          payload = { commodity: "Maize", location: "Nairobi" };
+          break;
         case "government":
           endpoint = "government-reporting-agent";
           payload = {};
           break;
-
         default:
           toast.error(`Unknown agent: ${agentType}`);
           setIsRefreshing(false);
           return;
       }
 
-      const { data, error } = await supabase.functions.invoke(endpoint, {
-        body: payload,
-      });
-
+      const { error } = await supabase.functions.invoke(endpoint, { body: payload });
       if (error) throw error;
 
       toast.success(`${agentType} agent executed successfully`);
@@ -170,7 +171,6 @@ export const AgentDashboard = () => {
     }
   };
 
-  // Corrected agent type mapping
   const agentTypeMap = ["climate", "crop", "post-harvest", "market", "government"];
 
   return (
@@ -218,7 +218,6 @@ export const AgentDashboard = () => {
                   {"insights" in agent && <span>Insights: {agent.insights}</span>}
                   {"reports" in agent && <span>Reports: {agent.reports}</span>}
 
-                  {/* ⭐ NEW COLLABORATION BADGE ⭐ */}
                   {agent.name === "Post-Harvest Prevention" && agent.triggeredBy && (
                     <Badge
                       variant="outline"
@@ -228,15 +227,41 @@ export const AgentDashboard = () => {
                     </Badge>
                   )}
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => runAgent(agentType)}
-                    disabled={isRefreshing}
-                  >
-                    Run Analysis
-                  </Button>
+                  {/* ⭐ GOVERNMENT REPORTING BUTTON UPDATE ⭐ */}
+                  {idx === 4 ? (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => runAgent("government")}
+                        disabled={isRefreshing}
+                      >
+                        Generate Brief
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          toast.success("Downloading Policy Brief (PDF)...");
+                          // In a real app → window.open("public-policy-brief.pdf")
+                        }}
+                      >
+                        <Download className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => runAgent(agentType)}
+                      disabled={isRefreshing}
+                    >
+                      Run Analysis
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

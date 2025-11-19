@@ -7,11 +7,10 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  if (req.method === "OPTIONS")
-    return new Response(null, { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { region, cropType, storageType } = await req.json();
+    const { region, cropType, storageType, triggerReason } = await req.json();
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -21,9 +20,9 @@ serve(async (req) => {
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY")!;
 
     // -----------------------------------------------------------
-    // 1. Fetch latest climate data for the region
+    // 1. Fetch climate data safely
     // -----------------------------------------------------------
-    const { data: climate } = await supabase
+    const { data: climate, error: climateErr } = await supabase
       .from("climate_data")
       .select("*")
       .eq("region", region)
@@ -31,33 +30,31 @@ serve(async (req) => {
       .limit(1)
       .single();
 
+    if (climateErr) console.error("Climate fetch error:", climateErr);
+
+    const temperature = climate?.temperature ?? 25;
+    const humidity = climate?.humidity_percent ?? 60;
+
     // -----------------------------------------------------------
-    // 2. Build Gemini prompt using new workflow structure
+    // 2. Build prompt
     // -----------------------------------------------------------
     const prompt = `
-Analyze post-harvest risk for ${cropType} stored using ${storageType} storage in ${region}.
-
+Analyze post-harvest risk for ${cropType} in ${storageType} storage at ${region}.
 Current Conditions:
-- Temperature: ${climate?.temperature}°C
-- Humidity: ${climate?.humidity_percent}%
+- Temperature: ${temperature}°C
+- Humidity: ${humidity}%
 
-Provide:
-1. Spoilage Risk (Low/Medium/High)
-2. Estimated Safe Storage Time (days)
-3. Specific moisture/pest warnings
-4. Logistics recommendation ("Move to cold chain", "Sell immediately", etc.)
-
-Respond ONLY in JSON:
+Respond ONLY in valid JSON:
 {
-  "risk": "High",
-  "safe_days": 5,
-  "warnings": [],
-  "logistics_action": ""
+  "risk": "Low|Medium|High",
+  "safe_days": number,
+  "warnings": ["string"],
+  "logistics_action": "string"
 }
 `;
 
     // -----------------------------------------------------------
-    // 3. Call Lovable AI (Gemini 2.5 Flash)
+    // 3. AI call with error safety
     // -----------------------------------------------------------
     const aiResponse = await fetch(
       "https://ai.gateway.lovable.dev/v1/chat/completions",
@@ -70,7 +67,7 @@ Respond ONLY in JSON:
         body: JSON.stringify({
           model: "google/gemini-2.5-flash",
           messages: [
-            { role: "system", content: "You are a post-harvest expert." },
+            { role: "system", content: "You are a post-harvest expert. Always return JSON only." },
             { role: "user", content: prompt },
           ],
         }),
@@ -78,28 +75,63 @@ Respond ONLY in JSON:
     );
 
     const aiData = await aiResponse.json();
-    const analysis = JSON.parse(aiData.choices[0].message.content);
+
+    const raw = aiData?.choices?.[0]?.message?.content ?? "";
+    console.log("Raw AI Output:", raw);
 
     // -----------------------------------------------------------
-    // 4. Store AI prediction into agent_predictions
+    // 4. Safe JSON parsing
     // -----------------------------------------------------------
-    await supabase.from("agent_predictions").insert({
+    let analysis;
+    try {
+      const clean = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+      analysis = JSON.parse(clean);
+    } catch (e) {
+      console.error("AI JSON parse failed:", e);
+      analysis = {
+        risk: "Medium",
+        safe_days: 7,
+        warnings: ["AI parsing failed. Manual inspection recommended."],
+        logistics_action: "Keep grain dry; improve aeration.",
+      };
+    }
+
+    // Ensure mandatory fields exist
+    analysis.risk = analysis.risk ?? "Medium";
+    analysis.safe_days = analysis.safe_days ?? 7;
+    analysis.warnings = analysis.warnings ?? [];
+    analysis.logistics_action = analysis.logistics_action ?? "Monitor conditions.";
+
+    // -----------------------------------------------------------
+    // 5. Store prediction safely
+    // -----------------------------------------------------------
+    const { error: insertErr } = await supabase.from("agent_predictions").insert({
       agent_type: "post-harvest",
-      region: region,
-      prediction_data: analysis,
+      region: region ?? "Unknown",
+      prediction_data: {
+        ...analysis,
+        ...(triggerReason ? { triggerReason } : {}),
+      },
       risk_level: analysis.risk.toLowerCase(),
     });
 
+    if (insertErr) console.error("DB Insert Error:", insertErr);
+
     // -----------------------------------------------------------
-    // 5. Return response to client
+    // 6. Return result safely
     // -----------------------------------------------------------
     return new Response(JSON.stringify(analysis), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: corsHeaders,
-    });
+    console.error("Fatal Post-Harvest Agent Error:", error);
+    return new Response(
+      JSON.stringify({ error: error.message ?? "Unknown Server Error" }),
+      {
+        status: 500,
+        headers: corsHeaders,
+      }
+    );
   }
 });
